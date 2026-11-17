@@ -60,7 +60,7 @@
 
 | Вариант | Состав | Плюсы | Минусы | Ориентир/мес. |
 |---|---|---|---|---|
-| A. Cloud-first | GPT-4o + OpenAI embeddings + FAISS | Лучшее качество, минимум ops | Данные вне контура, GDPR | €50–200 |
+| A. Cloud-first | GPT-4o + OpenAI embeddings + FAISS | Лучшее качество, минимум ops | Данные вне контура, GDPR | €50–350 |
 | B. Local-first | Qwen2.5-32B + bge-m3 + FAISS, свой GPU | Полная конфиденциальность | Дорого, нужен MLOps, latency выше | €900–1 500 + FTE |
 | **C. Hybrid (выбран)** | Локальные Qwen2.5-32B + bge-m3 + FAISS; GPT-4o-mini только для public/internal | Баланс приватности, качества и гибкости | Сложнее маршрутизация | €900–1 500 + API |
 | D. Managed RAG | Azure OpenAI (EU) + Qdrant/Chroma Cloud | Минимум ops, масштабируемость | Данные в облаке, lock-in | €300–900 |
