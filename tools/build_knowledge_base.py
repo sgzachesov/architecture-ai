@@ -3,7 +3,7 @@
 1. Downloads 38 in-universe articles from starwars.fandom.com (MediaWiki API).
 2. Cleans wikitext into plain Markdown (no templates, refs, tables, out-of-universe sections).
 3. Replaces every key term using knowledge_base/terms_map.json.
-4. Writes knowledge_base/<slug>.md and knowledge_base/index.json.
+4. Writes knowledge_base/<slug>.md.
 
 Run: python tools/build_knowledge_base.py
 
@@ -255,10 +255,9 @@ def main() -> None:
     replace = build_replacer(terms_map)
     KB_DIR.mkdir(parents=True, exist_ok=True)
 
-    index: list[dict[str, str]] = []
+    written = 0
     used_slugs: set[str] = set()
-
-    for title, category in PAGES:
+    for title, _category in PAGES:
         _, content = fetch_wikitext(title)
         cleaned = clean_wikitext(content)
         if len(cleaned) < 500:
@@ -276,13 +275,11 @@ def main() -> None:
         document = f"# {heading}\n\n{body}\n"
 
         (KB_DIR / f"{slug}.md").write_text(document, encoding="utf-8", newline="\n")
-        index.append({"file": f"{slug}.md", "title": heading, "category": category})
+        written += 1
         print(f"ok {slug}.md ({len(document)} chars)")
         time.sleep(0.25)
 
-    payload = json.dumps({"documents": index}, ensure_ascii=False, indent=2)
-    (KB_DIR / "index.json").write_text(payload + "\n", encoding="utf-8", newline="\n")
-    print(f"\n{len(index)} documents written to knowledge_base/")
+    print(f"\n{written} documents written to knowledge_base/")
 
 
 if __name__ == "__main__":
