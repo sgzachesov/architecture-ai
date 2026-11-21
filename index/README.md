@@ -33,15 +33,58 @@
 
 ## Запуск
 
-```bash
-pip install numpy onnxruntime tokenizers faiss-cpu
+Python на компьютере не нужен — всё считается в контейнере. Достаточно Docker Desktop.
 
-python tools/build_index.py            # собрать индекс
-python tools/search_index.py           # примеры запросов
-python tools/search_index.py "Who was Xarn Velgor?" --top-k 5
+### 1. Запустить Docker
+
+Открыть Docker Desktop и дождаться, пока движок начнёт отвечать:
+
+```powershell
+docker info --format "{{.ServerVersion}}"
 ```
 
-При первом запуске `build_index.py` скачивает веса модели (~570 МБ) в `models/bge-m3/`; папка `models/` в git не попадает.
+### 2. Собрать образ
+
+Из корня проекта, там где лежит `Dockerfile`:
+
+```powershell
+cd C:\Project\lern\ya-architecture\architecture-ai
+docker build -t quantumforge-rag .
+```
+
+Сборка занимает 2–3 минуты: скачивает зависимости из `tools/requirements.txt`. Повторять нужно только после изменения этого файла.
+
+### 3. Запускать скрипты
+
+Папку проекта надо смонтировать в `/app`, иначе контейнер не увидит базу знаний, индекс и веса модели:
+
+```powershell
+docker run --rm -v "C:\Project\lern\ya-architecture\architecture-ai:/app" quantumforge-rag tools/search_index.py
+docker run --rm -v "C:\Project\lern\ya-architecture\architecture-ai:/app" quantumforge-rag tools/search_index.py "Who was Xarn Velgor?" --top-k 5
+docker run --rm -v "C:\Project\lern\ya-architecture\architecture-ai:/app" quantumforge-rag tools/build_index.py
+```
+
+В bash тот же путь короче:
+
+```bash
+docker run --rm -v "$(pwd):/app" quantumforge-rag tools/search_index.py
+```
+
+Файлы, которые создаёт контейнер (`index/faiss.index`, `index/chunks.json`, `index/search_examples.md`), появляются сразу в папке проекта.
+
+### Первый запуск
+
+`build_index.py` скачивает веса модели (~570 МБ) в `models/bge-m3/` — через смонтированную папку, то есть на диск хоста. При следующем запуске они уже на месте. Папка `models/` в git не попадает.
+
+### Без Docker
+
+Если Python 3.12 уже установлен:
+
+```bash
+python -m pip install -r tools/requirements.txt
+python tools/build_index.py
+python tools/search_index.py
+```
 
 ## Пример запроса
 
