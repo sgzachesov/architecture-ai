@@ -102,3 +102,52 @@ Wikitext очищен от шаблонов, сносок, таблиц, изо�
 - `tools/build_knowledge_base.py` — загрузка, очистка и замена.
 
 Тексты читаются как связная космоопера, но не содержат имён и названий Star Wars, поэтому модель не может ответить по памяти — только по загруженным документам.
+
+# Задание 3. Создание векторного индекса базы знаний
+
+> Описание индекса: [`index/README.md`](index/README.md)
+
+## 1. Модель эмбеддингов
+
+`BAAI/bge-m3` — та же модель, что выбрана в задании 1.
+
+| | |
+|---|---|
+| Название | `BAAI/bge-m3` |
+| Ссылка | https://huggingface.co/BAAI/bge-m3 |
+| Размерность | 1024 |
+| Формат запуска | ONNX int8 (`Xenova/bge-m3`), `onnxruntime`, CLS-пулинг + L2-нормализация |
+
+## 2. Чанки
+
+Документы режутся по абзацам; абзац длиннее 300 слов делится по предложениям, а если предложение всё равно длинное — по словам. Короткие чанки склеиваются с соседними и при необходимости делятся заново.
+
+- 228 чанков из 38 документов, 91–300 слов (медиана 224).
+- Каждый чанк хранит `chunk_id`, `source` (путь к файлу), `title`, `heading` раздела и `start_char`/`end_char` — позицию в исходном документе для цитирования.
+
+## 3. Индекс
+
+`FAISS` (`IndexIDMap2` + `IndexFlatIP`) — как выбрано в задании 1. Векторы нормализованы, поэтому внутреннее произведение равно косинусной близости.
+
+- `index/faiss.index` — сам индекс.
+- `index/chunks.json` — тексты и метаданные чанков; id в FAISS совпадает с позицией в списке.
+- `tools/build_index.py` — сборка индекса, `tools/embedding.py` — загрузка модели и кодирование, `tools/search_index.py` — поиск по запросу.
+- Генерация эмбеддингов заняла ~70 с на CPU.
+
+## 4. Проверка
+
+`index/search_examples.md` — четыре запроса с топ-3 чанками. Пример:
+
+```
+Query: How does a fluxblade work and what crystal does it use?
+
+  0.6764  fluxblade-001  (179 words)
+    The fluxblade, also referred to as a laser sword by those who were unfamiliar
+    with it, was a weapon usually used by the Fluxadept, Voidsworn...
+
+  0.6288  fluxblade-002  (219 words)
+    Fluxblades were generally used for both offense and defense...
+```
+
+Поиск находит нужные разделы по смыслу: запрос про Xarn Velgor возвращает статью об Aran Velmor, запрос про Sorrhas — раздел о событиях на этой планете.
+

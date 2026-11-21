@@ -14,3 +14,7 @@
 # Local environment
 .env
 
+# Downloaded embedding model weights
+/models/
+__pycache__/
+
