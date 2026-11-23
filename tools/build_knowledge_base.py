@@ -106,6 +106,160 @@ DROP_HEADINGS = re.compile(
 REPEATED_WORD = re.compile(r"\b([A-Za-z]+)\s+\1\b", re.IGNORECASE)
 
 
+def main() -> None:
+    """Скачивает статьи, очищает их и сохраняет готовые документы."""
+    # Читаем словарь замен.
+    terms_map = json.loads((KB_DIR / "terms_map.json").read_text(encoding="utf-8"))
+    # Готовим функцию замены.
+    replace = build_replacer(terms_map)
+    # Создаём папку базы знаний, если её нет.
+    KB_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Счётчик записанных документов.
+    written = 0
+    # Уже занятые имена файлов, чтобы не перезаписать документ.
+    used_slugs: set[str] = set()
+    # Обрабатываем каждую статью из списка.
+    for title, _category in PAGES:
+        # Скачиваем wikitext.
+        _, content = fetch_wikitext(title)
+        # Чистим разметку.
+        cleaned = clean_wikitext(content)
+        # Слишком короткий результат пропускаем: вероятно, статья не подходит.
+        if len(cleaned) < 500:
+            print(f"skip {title}: only {len(cleaned)} chars after cleaning")
+            continue
+
+        # Заменяем термины и убираем дубли слов, появившиеся после чистки.
+        replaced = REPEATED_WORD.sub(r"\1", replace(cleaned))
+        # Заголовок документа — тоже с заменой терминов.
+        heading = replace(title)
+        # Имя файла из заголовка.
+        slug = slugify(heading)
+        # Если такое имя уже занято — добавляем суффикс.
+        if slug in used_slugs:
+            slug = f"{slug}-2"
+        # Запоминаем имя.
+        used_slugs.add(slug)
+
+        # Убираем первый дублирующий заголовок и обрезаем текст до лимита.
+        body = truncate(re.sub(r"^##\s+.+\n+", "", replaced, count=1), MAX_CHARS)
+        # Собираем документ: заголовок и текст.
+        document = f"# {heading}\n\n{body}\n"
+
+        # Записываем файл в UTF-8 с переводами строк \n.
+        (KB_DIR / f"{slug}.md").write_text(document, encoding="utf-8", newline="\n")
+        # Увеличиваем счётчик.
+        written += 1
+        # Сообщаем о готовом файле.
+        print(f"ok {slug}.md ({len(document)} chars)")
+        # Небольшая пауза, чтобы не нагружать вики.
+        time.sleep(0.25)
+
+    # Итог: сколько документов записано.
+    print(f"\n{written} documents written to knowledge_base/")
+
+
+def fetch_wikitext(title: str) -> tuple[str, str]:
+    """Скачивает исходный wikitext статьи через MediaWiki API."""
+    # Собираем URL запроса: получаем содержимое страницы по её названию.
+    url = (
+        f"{API}?action=query&format=json&formatversion=2&redirects=1"
+        f"&prop=revisions&rvprop=content&rvslots=main&titles={quote(title)}"
+    )
+    # Готовим запрос с User-Agent, как требует API.
+    request = Request(url, headers={"User-Agent": "quantumforge-rag-kb/1.0 (educational knowledge base)"})
+
+    # Делаем до трёх попыток при сетевых сбоях.
+    for attempt in range(1, 4):
+        try:
+            # Открываем соединение и разбираем JSON-ответ.
+            with urlopen(request, timeout=30) as response:
+                data = json.load(response)
+            # Берём первую (и единственную) страницу из ответа.
+            page = data["query"]["pages"][0]
+            # Если страницы нет — сообщаем об ошибке.
+            if page.get("missing"):
+                raise ValueError(f"page not found: {title}")
+            # Достаём содержимое основной версии статьи.
+            content = page["revisions"][0]["slots"]["main"]["content"]
+            # Пустая статья тоже считается ошибкой.
+            if not content:
+                raise ValueError(f"empty content: {title}")
+            # Возвращаем реальное название и текст.
+            return page["title"], content
+        except Exception:
+            # На третьей попытке пробрасываем ошибку дальше.
+            if attempt == 3:
+                raise
+            # Перед повтором ждём всё дольше.
+            time.sleep(0.8 * attempt)
+
+    # Сюда дойти не должны, но на всякий случай.
+    raise RuntimeError(f"unreachable: {title}")
+
+
+def clean_wikitext(raw: str) -> str:
+    """Полностью очищает статью: от вики-разметки до готового Markdown."""
+    # Приводим переводы строк к \n.
+    text = raw.replace("\r\n", "\n").replace("\r", "\n")
+
+    # Ищем начало служебного раздела и обрезаем всё после него.
+    section_start = DROP_SECTIONS.search(text)
+    if section_start:
+        text = text[: section_start.start()]
+
+    # Удаляем теги, шаблоны и таблицы.
+    text = strip_tags(text)
+    text = strip_templates(text)
+    text = strip_tables(text)
+    # Преобразуем ссылки и заголовки в Markdown.
+    text = convert_markup(text)
+    # Раскодируем HTML-сущности и заменяем неразрывный пробел.
+    text = html.unescape(text).replace("\xa0", " ")
+
+    # Ещё раз обрезаем по служебному заголовку, уже в виде ##.
+    heading_cut = DROP_HEADINGS.search(text)
+    if heading_cut:
+        text = text[: heading_cut.start()]
+
+    # Убираем оставшиеся «внешние» строки и пустые обрывки.
+    lines = []
+    for line in text.split("\n"):
+        # Убираем пробелы по краям.
+        line = line.strip()
+        # Пустые строки не нужны.
+        if not line:
+            continue
+        # Строки про франшизу и служебные разделы выбрасываем.
+        if OUT_OF_UNIVERSE.search(line):
+            continue
+        # Строки из одних символов разметки выбрасываем.
+        if re.fullmatch(r"[|!{}]+", line):
+            continue
+        # Пустые скобки выбрасываем.
+        if re.fullmatch(r"\(?\)?", line):
+            continue
+        # Остальное сохраняем.
+        lines.append(line)
+
+    # Схлопываем подряд идущие заголовки: второй обычно пустой раздел.
+    kept: list[str] = []
+    for line in lines:
+        # Это заголовок раздела?
+        is_heading = line.startswith("## ")
+        # Предыдущая сохранённая строка тоже заголовок?
+        previous_is_heading = bool(kept) and kept[-1].startswith("## ")
+        # Если два заголовка подряд — убираем предыдущий.
+        if is_heading and previous_is_heading:
+            kept.pop()
+        # Добавляем строку.
+        kept.append(line)
+
+    # Склеиваем абзацы, убираем лишние пустые строки и обрезаем края.
+    return re.sub(r"\n{3,}", "\n\n", "\n\n".join(kept)).strip()
+
+
 def strip_tags(text: str) -> str:
     """Удаляет комментарии, сноски и прочие HTML-теги."""
     # Убираем HTML-комментарии.
@@ -179,79 +333,6 @@ def convert_markup(text: str) -> str:
     return re.sub(r" +\n", "\n", text)
 
 
-def clean_wikitext(raw: str) -> str:
-    """Полностью очищает статью: от вики-разметки до готового Markdown."""
-    # Приводим переводы строк к \n.
-    text = raw.replace("\r\n", "\n").replace("\r", "\n")
-
-    # Ищем начало служебного раздела и обрезаем всё после него.
-    section_start = DROP_SECTIONS.search(text)
-    if section_start:
-        text = text[: section_start.start()]
-
-    # Удаляем теги, шаблоны и таблицы.
-    text = strip_tags(text)
-    text = strip_templates(text)
-    text = strip_tables(text)
-    # Преобразуем ссылки и заголовки в Markdown.
-    text = convert_markup(text)
-    # Раскодируем HTML-сущности и заменяем неразрывный пробел.
-    text = html.unescape(text).replace("\xa0", " ")
-
-    # Ещё раз обрезаем по служебному заголовку, уже в виде ##.
-    heading_cut = DROP_HEADINGS.search(text)
-    if heading_cut:
-        text = text[: heading_cut.start()]
-
-    # Убираем оставшиеся «внешние» строки и пустые обрывки.
-    lines = []
-    for line in text.split("\n"):
-        # Убираем пробелы по краям.
-        line = line.strip()
-        # Пустые строки не нужны.
-        if not line:
-            continue
-        # Строки про франшизу и служебные разделы выбрасываем.
-        if OUT_OF_UNIVERSE.search(line):
-            continue
-        # Строки из одних символов разметки выбрасываем.
-        if re.fullmatch(r"[|!{}]+", line):
-            continue
-        # Пустые скобки выбрасываем.
-        if re.fullmatch(r"\(?\)?", line):
-            continue
-        # Остальное сохраняем.
-        lines.append(line)
-
-    # Схлопываем подряд идущие заголовки: второй обычно пустой раздел.
-    kept: list[str] = []
-    for line in lines:
-        # Это заголовок раздела?
-        is_heading = line.startswith("## ")
-        # Предыдущая сохранённая строка тоже заголовок?
-        previous_is_heading = bool(kept) and kept[-1].startswith("## ")
-        # Если два заголовка подряд — убираем предыдущий.
-        if is_heading and previous_is_heading:
-            kept.pop()
-        # Добавляем строку.
-        kept.append(line)
-
-    # Склеиваем абзацы, убираем лишние пустые строки и обрезаем края.
-    return re.sub(r"\n{3,}", "\n\n", "\n\n".join(kept)).strip()
-
-
-def apply_case(source: str, target: str) -> str:
-    """Переносит регистр исходного слова на замену."""
-    # Аббревиатуры вроде TIE остаются заглавными.
-    if len(source) > 1 and source.isupper() and " " not in target and len(target) <= 4:
-        return target.upper()
-    # Слово с заглавной буквы — замена тоже с заглавной.
-    if source[0] == source[0].upper():
-        return target[0].upper() + target[1:]
-    # Иначе — со строчной.
-    return target[0].lower() + target[1:]
-
-
 def build_replacer(terms_map: dict):
     """Собирает функцию замены терминов по словарю."""
     # Слова, которые заменяются только при точном совпадении регистра.
@@ -298,6 +379,18 @@ def build_replacer(terms_map: dict):
     return replace
 
 
+def apply_case(source: str, target: str) -> str:
+    """Переносит регистр исходного слова на замену."""
+    # Аббревиатуры вроде TIE остаются заглавными.
+    if len(source) > 1 and source.isupper() and " " not in target and len(target) <= 4:
+        return target.upper()
+    # Слово с заглавной буквы — замена тоже с заглавной.
+    if source[0] == source[0].upper():
+        return target[0].upper() + target[1:]
+    # Иначе — со строчной.
+    return target[0].lower() + target[1:]
+
+
 def slugify(title: str) -> str:
     """Превращает заголовок в имя файла: латиница, цифры и дефисы."""
     # Разлагаем символы с диакритикой на базовые (é → e).
@@ -323,99 +416,6 @@ def truncate(text: str, limit: int) -> str:
     body = cut[:boundary] if boundary > limit * 0.5 else cut
     # Добавляем пометку об обрезке.
     return body + "\n\n_(excerpt truncated)_"
-
-
-def fetch_wikitext(title: str) -> tuple[str, str]:
-    """Скачивает исходный wikitext статьи через MediaWiki API."""
-    # Собираем URL запроса: получаем содержимое страницы по её названию.
-    url = (
-        f"{API}?action=query&format=json&formatversion=2&redirects=1"
-        f"&prop=revisions&rvprop=content&rvslots=main&titles={quote(title)}"
-    )
-    # Готовим запрос с User-Agent, как требует API.
-    request = Request(url, headers={"User-Agent": "quantumforge-rag-kb/1.0 (educational knowledge base)"})
-
-    # Делаем до трёх попыток при сетевых сбоях.
-    for attempt in range(1, 4):
-        try:
-            # Открываем соединение и разбираем JSON-ответ.
-            with urlopen(request, timeout=30) as response:
-                data = json.load(response)
-            # Берём первую (и единственную) страницу из ответа.
-            page = data["query"]["pages"][0]
-            # Если страницы нет — сообщаем об ошибке.
-            if page.get("missing"):
-                raise ValueError(f"page not found: {title}")
-            # Достаём содержимое основной версии статьи.
-            content = page["revisions"][0]["slots"]["main"]["content"]
-            # Пустая статья тоже считается ошибкой.
-            if not content:
-                raise ValueError(f"empty content: {title}")
-            # Возвращаем реальное название и текст.
-            return page["title"], content
-        except Exception:
-            # На третьей попытке пробрасываем ошибку дальше.
-            if attempt == 3:
-                raise
-            # Перед повтором ждём всё дольше.
-            time.sleep(0.8 * attempt)
-
-    # Сюда дойти не должны, но на всякий случай.
-    raise RuntimeError(f"unreachable: {title}")
-
-
-def main() -> None:
-    """Скачивает статьи, очищает их и сохраняет готовые документы."""
-    # Читаем словарь замен.
-    terms_map = json.loads((KB_DIR / "terms_map.json").read_text(encoding="utf-8"))
-    # Готовим функцию замены.
-    replace = build_replacer(terms_map)
-    # Создаём папку базы знаний, если её нет.
-    KB_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Счётчик записанных документов.
-    written = 0
-    # Уже занятые имена файлов, чтобы не перезаписать документ.
-    used_slugs: set[str] = set()
-    # Обрабатываем каждую статью из списка.
-    for title, _category in PAGES:
-        # Скачиваем wikitext.
-        _, content = fetch_wikitext(title)
-        # Чистим разметку.
-        cleaned = clean_wikitext(content)
-        # Слишком короткий результат пропускаем: вероятно, статья не подходит.
-        if len(cleaned) < 500:
-            print(f"skip {title}: only {len(cleaned)} chars after cleaning")
-            continue
-
-        # Заменяем термины и убираем дубли слов, появившиеся после чистки.
-        replaced = REPEATED_WORD.sub(r"\1", replace(cleaned))
-        # Заголовок документа — тоже с заменой терминов.
-        heading = replace(title)
-        # Имя файла из заголовка.
-        slug = slugify(heading)
-        # Если такое имя уже занято — добавляем суффикс.
-        if slug in used_slugs:
-            slug = f"{slug}-2"
-        # Запоминаем имя.
-        used_slugs.add(slug)
-
-        # Убираем первый дублирующий заголовок и обрезаем текст до лимита.
-        body = truncate(re.sub(r"^##\s+.+\n+", "", replaced, count=1), MAX_CHARS)
-        # Собираем документ: заголовок и текст.
-        document = f"# {heading}\n\n{body}\n"
-
-        # Записываем файл в UTF-8 с переводами строк \n.
-        (KB_DIR / f"{slug}.md").write_text(document, encoding="utf-8", newline="\n")
-        # Увеличиваем счётчик.
-        written += 1
-        # Сообщаем о готовом файле.
-        print(f"ok {slug}.md ({len(document)} chars)")
-        # Небольшая пауза, чтобы не нагружать вики.
-        time.sleep(0.25)
-
-    # Итог: сколько документов записано.
-    print(f"\n{written} documents written to knowledge_base/")
 
 
 if __name__ == "__main__":

@@ -45,49 +45,6 @@ DEFAULT_QUERIES = [
 ]
 
 
-def load_index(index_dir: Path) -> tuple[faiss.Index, list[dict]]:
-    """Читает с диска индекс FAISS и метаданные чанков."""
-    # Загружаем бинарный индекс.
-    index = faiss.read_index(str(index_dir / "faiss.index"))
-    # Читаем JSON с чанками и достаём список.
-    payload = json.loads((index_dir / "chunks.json").read_text(encoding="utf-8"))
-    # Возвращаем индекс и чанки: id в индексе совпадает с позицией в списке.
-    return index, payload["chunks"]
-
-
-def search(encoder: BgeM3, index: faiss.Index, chunks: list[dict], query: str, top_k: int) -> list[dict]:
-    """Кодирует запрос и возвращает top_k ближайших чанков."""
-    # Превращаем запрос в вектор той же моделью, что кодировала чанки.
-    vector = encoder.encode([query])
-    # Ищем top_k ближайших векторов: получаем оценки и их id.
-    scores, ids = index.search(vector, top_k)
-    # Сюда складываем найденные чанки.
-    hits = []
-    # Проходим по результатам первого (и единственного) запроса.
-    for score, chunk_id in zip(scores[0], ids[0]):
-        # Отрицательный id означает пустой результат — пропускаем.
-        if chunk_id < 0:
-            continue
-        # Достаём чанк по id.
-        chunk = chunks[int(chunk_id)]
-        # Собираем всё нужное для ответа и цитирования.
-        hits.append(
-            {
-                "score": round(float(score), 4),
-                "chunk_id": chunk["chunk_id"],
-                "source": chunk["source"],
-                "title": chunk["title"],
-                "heading": chunk["heading"],
-                "start_char": chunk["start_char"],
-                "end_char": chunk["end_char"],
-                "words": chunk["words"],
-                "text": chunk["text"],
-            }
-        )
-    # Возвращаем найденные чанки в порядке убывания близости.
-    return hits
-
-
 def main() -> int:
     """Разбирает аргументы, выполняет запросы и печатает результат."""
     # Описываем параметры командной строки.
@@ -154,6 +111,49 @@ def main() -> int:
         print(f"\nsaved to {args.save}")
     # Успешное завершение.
     return 0
+
+
+def load_index(index_dir: Path) -> tuple[faiss.Index, list[dict]]:
+    """Читает с диска индекс FAISS и метаданные чанков."""
+    # Загружаем бинарный индекс.
+    index = faiss.read_index(str(index_dir / "faiss.index"))
+    # Читаем JSON с чанками и достаём список.
+    payload = json.loads((index_dir / "chunks.json").read_text(encoding="utf-8"))
+    # Возвращаем индекс и чанки: id в индексе совпадает с позицией в списке.
+    return index, payload["chunks"]
+
+
+def search(encoder: BgeM3, index: faiss.Index, chunks: list[dict], query: str, top_k: int) -> list[dict]:
+    """Кодирует запрос и возвращает top_k ближайших чанков."""
+    # Превращаем запрос в вектор той же моделью, что кодировала чанки.
+    vector = encoder.encode([query])
+    # Ищем top_k ближайших векторов: получаем оценки и их id.
+    scores, ids = index.search(vector, top_k)
+    # Сюда складываем найденные чанки.
+    hits = []
+    # Проходим по результатам первого (и единственного) запроса.
+    for score, chunk_id in zip(scores[0], ids[0]):
+        # Отрицательный id означает пустой результат — пропускаем.
+        if chunk_id < 0:
+            continue
+        # Достаём чанк по id.
+        chunk = chunks[int(chunk_id)]
+        # Собираем всё нужное для ответа и цитирования.
+        hits.append(
+            {
+                "score": round(float(score), 4),
+                "chunk_id": chunk["chunk_id"],
+                "source": chunk["source"],
+                "title": chunk["title"],
+                "heading": chunk["heading"],
+                "start_char": chunk["start_char"],
+                "end_char": chunk["end_char"],
+                "words": chunk["words"],
+                "text": chunk["text"],
+            }
+        )
+    # Возвращаем найденные чанки в порядке убывания близости.
+    return hits
 
 
 if __name__ == "__main__":

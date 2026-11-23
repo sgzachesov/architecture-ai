@@ -49,32 +49,6 @@ FILES = {
 }
 
 
-def _download(url: str, target: Path) -> None:
-    """Скачивает один файл по URL и сохраняет его в target."""
-    # Готовим запрос с User-Agent, чтобы сервер не отклонял его как бота.
-    request = urllib.request.Request(url, headers={"User-Agent": "quantumforge-rag-index/1.0"})
-    # Открываем соединение и файл одновременно: поток копируется блоками по 1 МБ.
-    with urllib.request.urlopen(request, timeout=60) as response, target.open("wb") as handle:
-        shutil.copyfileobj(response, handle, length=1024 * 1024)
-
-
-def ensure_model(model_dir: Path = DEFAULT_MODEL_DIR) -> Path:
-    """Скачивает файлы модели, если их ещё нет на диске."""
-    # Создаём папку модели, если она отсутствует.
-    model_dir.mkdir(parents=True, exist_ok=True)
-    # Проходим по всем нужным файлам.
-    for name, url in FILES.items():
-        target = model_dir / name
-        # Если файл уже скачан и не пустой — пропускаем.
-        if target.exists() and target.stat().st_size > 0:
-            continue
-        # Иначе сообщаем и скачиваем.
-        print(f"downloading {name} ...")
-        _download(url, target)
-    # Возвращаем путь к готовой папке с моделью.
-    return model_dir
-
-
 class BgeM3:
     """Кодировщик текста в вектор: загрузка модели и инференс."""
 
@@ -116,6 +90,32 @@ class BgeM3:
             vectors.append(cls / np.clip(norms, 1e-12, None))
         # Склеиваем батчи в одну матрицу.
         return np.vstack(vectors)
+
+
+def ensure_model(model_dir: Path = DEFAULT_MODEL_DIR) -> Path:
+    """Скачивает файлы модели, если их ещё нет на диске."""
+    # Создаём папку модели, если она отсутствует.
+    model_dir.mkdir(parents=True, exist_ok=True)
+    # Проходим по всем нужным файлам.
+    for name, url in FILES.items():
+        target = model_dir / name
+        # Если файл уже скачан и не пустой — пропускаем.
+        if target.exists() and target.stat().st_size > 0:
+            continue
+        # Иначе сообщаем и скачиваем.
+        print(f"downloading {name} ...")
+        _download(url, target)
+    # Возвращаем путь к готовой папке с моделью.
+    return model_dir
+
+
+def _download(url: str, target: Path) -> None:
+    """Скачивает один файл по URL и сохраняет его в target."""
+    # Готовим запрос с User-Agent, чтобы сервер не отклонял его как бота.
+    request = urllib.request.Request(url, headers={"User-Agent": "quantumforge-rag-index/1.0"})
+    # Открываем соединение и файл одновременно: поток копируется блоками по 1 МБ.
+    with urllib.request.urlopen(request, timeout=60) as response, target.open("wb") as handle:
+        shutil.copyfileobj(response, handle, length=1024 * 1024)
 
 
 def model_dir_from_env() -> Path:

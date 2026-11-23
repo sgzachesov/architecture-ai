@@ -58,9 +58,134 @@ SPLITTER = RecursiveCharacterTextSplitter(
 )
 
 
-def words(text: str) -> int:
-    """Считает слова в строке простым разбиением по пробелам."""
-    return len(text.split())
+def main() -> None:
+    """Собирает индекс по всем документам базы знаний."""
+    # Скачиваем веса модели, если их ещё нет, и запоминаем папку.
+    model_dir = ensure_model(model_dir_from_env())
+    # Создаём кодировщик.
+    encoder = BgeM3(model_dir)
+
+    # Берём все документы базы знаний, кроме README.
+    documents = sorted(path for path in KB_DIR.glob("*.md") if path.name != "README.md")
+    # Сюда складываем чанки всех документов.
+    chunks: list[dict] = []
+    # Обрабатываем каждый документ.
+    for path in documents:
+        # Читаем текст файла.
+        text = path.read_text(encoding="utf-8")
+        # Заголовок документа — первая строка без "# ".
+        title = text.splitlines()[0].removeprefix("# ").strip()
+        # Режем документ на чанки и добавляем их к общему списку.
+        chunks.extend(build_chunks(text, title, f"knowledge_base/{path.name}"))
+
+    # Печатаем, сколько документов и чанков получилось.
+    print(f"documents: {len(documents)}, chunks: {len(chunks)}")
+
+    # Заголовок и раздел дают коротким чанкам контекст для поиска.
+    to_embed = [
+        f"{chunk['title']}. {chunk['heading']}. {chunk['text']}"
+        if chunk["heading"]
+        else f"{chunk['title']}. {chunk['text']}"
+        for chunk in chunks
+    ]
+
+    # Засекаем время генерации эмбеддингов.
+    started = time.perf_counter()
+    # Кодируем все тексты: получаем матрицу векторов.
+    vectors = encoder.encode(to_embed)
+    # Считаем, сколько это заняло.
+    elapsed = time.perf_counter() - started
+
+    # Создаём индекс: id-обёртка над плоским индексом скалярных произведений.
+    index = faiss.IndexIDMap2(faiss.IndexFlatIP(DIMENSION))
+    # Добавляем векторы, используя их порядковый номер как id.
+    index.add_with_ids(vectors, np.arange(len(chunks), dtype=np.int64))
+
+    # Создаём папку index/, если её нет.
+    INDEX_DIR.mkdir(parents=True, exist_ok=True)
+    # Сохраняем индекс на диск.
+    faiss.write_index(index, str(INDEX_DIR / "faiss.index"))
+
+    # Готовим метаданные: модель, размерность, параметры нарезки и сами чанки.
+    payload = {
+        "model": MODEL_NAME,
+        "dimension": DIMENSION,
+        "chunking": {"unit": "words", "min": MIN_WORDS, "max": MAX_WORDS},
+        "count": len(chunks),
+        "embedding_seconds": round(elapsed, 1),
+        "chunks": chunks,
+    }
+    # Записываем chunks.json рядом с индексом.
+    (INDEX_DIR / "chunks.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    # Собираем размеры чанков для отчёта.
+    sizes = [chunk["words"] for chunk in chunks]
+    # Печатаем время генерации и диапазон размеров.
+    print(f"embedding: {elapsed:.1f}s, words per chunk: {min(sizes)}-{max(sizes)}")
+    # Сообщаем, куда записан индекс.
+    print(f"index written to {INDEX_DIR / 'faiss.index'}")
+
+
+def build_chunks(text: str, title: str, source: str) -> list[dict]:
+    """Превращает документ в список чанков с метаданными."""
+    # Маскируем заголовки и готовим карту позиций.
+    masked, headings, adjust = prepare(text)
+    # Режем документ готовым сплиттером: каждый фрагмент с позицией start_index.
+    documents = SPLITTER.create_documents([masked])
+    # Сюда складываем чанки с восстановленными позициями.
+    pieces: list[dict] = []
+    # Обрабатываем каждый фрагмент, выданный сплиттером.
+    for document in documents:
+        # Извлекаем текст фрагмента и убираем случайный «.» в начале.
+        body_text = document.page_content
+        if body_text.startswith(". "):
+            body_text = body_text[2:]
+        # Пустые фрагменты и служебную пометку об обрезке отбрасываем.
+        if not body_text or not body_text.strip() or body_text.startswith("_(excerpt truncated)_"):
+            continue
+        # Сколько пробелов убрать в начале, чтобы текст начинался с первого слова.
+        leading = len(body_text) - len(body_text.lstrip())
+        # Чистый текст фрагмента.
+        body = body_text.strip()
+        # Переводим позицию начала из маскированного текста в исходный.
+        start = to_original(document.metadata.get("start_index", 0), adjust) + leading
+        # Складываем словами и метаданными: позиция, раздел, сам текст.
+        pieces.append(
+            {
+                "start": start,
+                "end": start + len(body),
+                "heading": heading_at(headings, start),
+                "text": body,
+            }
+        )
+    # Склеиваем слишком короткие чанки.
+    pieces = merge_small(pieces)
+
+    # Формируем итоговые чанки.
+    chunks: list[dict] = []
+    for number, piece in enumerate(pieces, start=1):
+        # Текст чанка.
+        body = piece["text"]
+        # Складываем чанк со всеми метаданными для цитирования.
+        chunks.append(
+            {
+                "id": len(chunks),
+                "chunk_id": f"{Path(source).stem}-{number:03d}",
+                "source": source,
+                "title": title,
+                "heading": piece["heading"],
+                "start_char": piece["start"],
+                "end_char": piece["end"],
+                "words": words(body),
+                "text": body,
+            }
+        )
+    # Возвращаем чанки документа.
+    return chunks
 
 
 def prepare(text: str) -> tuple[str, list[tuple[int, str]], list[tuple[int, int]]]:
@@ -180,134 +305,9 @@ def merge_small(pieces: list[dict]) -> list[dict]:
     return merged
 
 
-def build_chunks(text: str, title: str, source: str) -> list[dict]:
-    """Превращает документ в список чанков с метаданными."""
-    # Маскируем заголовки и готовим карту позиций.
-    masked, headings, adjust = prepare(text)
-    # Режем документ готовым сплиттером: каждый фрагмент с позицией start_index.
-    documents = SPLITTER.create_documents([masked])
-    # Сюда складываем чанки с восстановленными позициями.
-    pieces: list[dict] = []
-    # Обрабатываем каждый фрагмент, выданный сплиттером.
-    for document in documents:
-        # Извлекаем текст фрагмента и убираем случайный «.» в начале.
-        body_text = document.page_content
-        if body_text.startswith(". "):
-            body_text = body_text[2:]
-        # Пустые фрагменты и служебную пометку об обрезке отбрасываем.
-        if not body_text or not body_text.strip() or body_text.startswith("_(excerpt truncated)_"):
-            continue
-        # Сколько пробелов убрать в начале, чтобы текст начинался с первого слова.
-        leading = len(body_text) - len(body_text.lstrip())
-        # Чистый текст фрагмента.
-        body = body_text.strip()
-        # Переводим позицию начала из маскированного текста в исходный.
-        start = to_original(document.metadata.get("start_index", 0), adjust) + leading
-        # Складываем словами и метаданными: позиция, раздел, сам текст.
-        pieces.append(
-            {
-                "start": start,
-                "end": start + len(body),
-                "heading": heading_at(headings, start),
-                "text": body,
-            }
-        )
-    # Склеиваем слишком короткие чанки.
-    pieces = merge_small(pieces)
-
-    # Формируем итоговые чанки.
-    chunks: list[dict] = []
-    for number, piece in enumerate(pieces, start=1):
-        # Текст чанка.
-        body = piece["text"]
-        # Складываем чанк со всеми метаданными для цитирования.
-        chunks.append(
-            {
-                "id": len(chunks),
-                "chunk_id": f"{Path(source).stem}-{number:03d}",
-                "source": source,
-                "title": title,
-                "heading": piece["heading"],
-                "start_char": piece["start"],
-                "end_char": piece["end"],
-                "words": words(body),
-                "text": body,
-            }
-        )
-    # Возвращаем чанки документа.
-    return chunks
-
-
-def main() -> None:
-    """Собирает индекс по всем документам базы знаний."""
-    # Скачиваем веса модели, если их ещё нет, и запоминаем папку.
-    model_dir = ensure_model(model_dir_from_env())
-    # Создаём кодировщик.
-    encoder = BgeM3(model_dir)
-
-    # Берём все документы базы знаний, кроме README.
-    documents = sorted(path for path in KB_DIR.glob("*.md") if path.name != "README.md")
-    # Сюда складываем чанки всех документов.
-    chunks: list[dict] = []
-    # Обрабатываем каждый документ.
-    for path in documents:
-        # Читаем текст файла.
-        text = path.read_text(encoding="utf-8")
-        # Заголовок документа — первая строка без "# ".
-        title = text.splitlines()[0].removeprefix("# ").strip()
-        # Режем документ на чанки и добавляем их к общему списку.
-        chunks.extend(build_chunks(text, title, f"knowledge_base/{path.name}"))
-
-    # Печатаем, сколько документов и чанков получилось.
-    print(f"documents: {len(documents)}, chunks: {len(chunks)}")
-
-    # Заголовок и раздел дают коротким чанкам контекст для поиска.
-    to_embed = [
-        f"{chunk['title']}. {chunk['heading']}. {chunk['text']}"
-        if chunk["heading"]
-        else f"{chunk['title']}. {chunk['text']}"
-        for chunk in chunks
-    ]
-
-    # Засекаем время генерации эмбеддингов.
-    started = time.perf_counter()
-    # Кодируем все тексты: получаем матрицу векторов.
-    vectors = encoder.encode(to_embed)
-    # Считаем, сколько это заняло.
-    elapsed = time.perf_counter() - started
-
-    # Создаём индекс: id-обёртка над плоским индексом скалярных произведений.
-    index = faiss.IndexIDMap2(faiss.IndexFlatIP(DIMENSION))
-    # Добавляем векторы, используя их порядковый номер как id.
-    index.add_with_ids(vectors, np.arange(len(chunks), dtype=np.int64))
-
-    # Создаём папку index/, если её нет.
-    INDEX_DIR.mkdir(parents=True, exist_ok=True)
-    # Сохраняем индекс на диск.
-    faiss.write_index(index, str(INDEX_DIR / "faiss.index"))
-
-    # Готовим метаданные: модель, размерность, параметры нарезки и сами чанки.
-    payload = {
-        "model": MODEL_NAME,
-        "dimension": DIMENSION,
-        "chunking": {"unit": "words", "min": MIN_WORDS, "max": MAX_WORDS},
-        "count": len(chunks),
-        "embedding_seconds": round(elapsed, 1),
-        "chunks": chunks,
-    }
-    # Записываем chunks.json рядом с индексом.
-    (INDEX_DIR / "chunks.json").write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-        newline="\n",
-    )
-
-    # Собираем размеры чанков для отчёта.
-    sizes = [chunk["words"] for chunk in chunks]
-    # Печатаем время генерации и диапазон размеров.
-    print(f"embedding: {elapsed:.1f}s, words per chunk: {min(sizes)}-{max(sizes)}")
-    # Сообщаем, куда записан индекс.
-    print(f"index written to {INDEX_DIR / 'faiss.index'}")
+def words(text: str) -> int:
+    """Считает слова в строке простым разбиением по пробелам."""
+    return len(text.split())
 
 
 if __name__ == "__main__":
