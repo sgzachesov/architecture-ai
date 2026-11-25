@@ -1,9 +1,9 @@
 """Ядро RAG-бота для задания 4: поиск по индексу + промптинг (few-shot, CoT).
 
 Цепочка: запрос пользователя → эмбеддинг (bge-m3, тот же энкодер, что и при
-построении индекса) → поиск ближайших чанков в FAISS → готовая цепочка
-LangChain `RetrievalQA` (chain_type="stuff") собирает промпт с few-shot
-примерами и Chain-of-Thought, вызывает LLM и возвращает ответ с источниками.
+построении индекса) → поиск ближайших чанков в FAISS → LCEL-цепочка на
+Runnable-ах (RunnableParallel → ChatPromptTemplate → LLM → StrOutputParser)
+собирает промпт с few-shot и Chain-of-Thought и возвращает ответ.
 
 Это библиотека: её использует REST-сервис `tools/api.py`. Напрямую не
 запускается.
@@ -12,7 +12,7 @@ LangChain `RetrievalQA` (chain_type="stuff") собирает промпт с fe
 модель через OpenAI-совместимый API (подходит OpenAI, YandexGPT и локальные
 серверы с таким API). Без ключа включается демо-режим: ответ собирается из
 найденных чанков по шаблону, чтобы цепочку можно было проверить без сети.
-Цепочка RetrievalQA при этом та же, подменяется только LLM.
+LCEL-цепочка при этом та же, подменяется только LLM.
 
 Техники промптинга:
 - Few-shot: два примера Q/A из этой же базы знаний (ответы сверены с чанками).
@@ -34,19 +34,21 @@ from pathlib import Path
 
 # requests — HTTP-запрос к OpenAI-совместимому /chat/completions.
 import requests
-# Готовая цепочка «поиск + вопрос → ответ» из LangChain.
-from langchain_classic.chains import RetrievalQA
 # Document — единица контекста для цепочки.
 from langchain_core.documents import Document
 # BaseChatModel — базовый класс для своей chat-модели.
 from langchain_core.language_models.chat_models import BaseChatModel
 # AIMessage — сообщение модели; ChatGeneration/ChatResult — формат её ответа.
 from langchain_core.messages import AIMessage, BaseMessage
+# StrOutputParser — достаёт текст из ответа модели в конце цепочки.
+from langchain_core.output_parsers import StrOutputParser
 from langchain_core.outputs import ChatGeneration, ChatResult
 # ChatPromptTemplate — шаблон промпта с ролями system/human.
 from langchain_core.prompts import ChatPromptTemplate
-# BaseRetriever — базовый класс ретривера для RetrievalQA.
+# BaseRetriever — базовый класс ретривера, отдающего документы цепочке.
 from langchain_core.retrievers import BaseRetriever
+# Runnable и RunnableLambda/RunnableParallel/RunnablePassthrough — сборка LCEL-цепочки.
+from langchain_core.runnables import Runnable, RunnableLambda, RunnableParallel, RunnablePassthrough
 # Field — поля pydantic-моделей LangChain.
 from pydantic import Field
 
@@ -119,7 +121,7 @@ FEW_SHOT = [
 # Блок few-shot в том виде, в каком он попадает в промпт.
 _EXAMPLES = "\n\n".join(f"Вопрос: {example['q']}\nОтвет: {example['a']}" for example in FEW_SHOT)
 
-# Шаблон промпта для RetrievalQA: system (CoT) + примеры + {context} + {question}.
+# Шаблон промпта для цепочки: system (CoT) + примеры + {context} + {question}.
 # Плейсхолдеры {context} и {question} заполняет сама цепочка.
 PROMPT = ChatPromptTemplate.from_messages(
     [
@@ -137,7 +139,7 @@ PROMPT = ChatPromptTemplate.from_messages(
 
 
 def answer(query: str, top_k: int = TOP_K, threshold: float = SCORE_THRESHOLD, demo: bool = False) -> dict:
-    """Полная цепочка RAG: поиск → RetrievalQA (промпт + LLM) → ответ с источниками."""
+    """Полная цепочка RAG: поиск → LCEL (промпт + LLM) → ответ с источниками."""
     # Шаг 1–3: ищем ближайшие чанки в векторной базе (с оценками близости).
     hits = retrieve(query, top_k)
 
@@ -151,17 +153,12 @@ def answer(query: str, top_k: int = TOP_K, threshold: float = SCORE_THRESHOLD, d
     # Шаг 4b: выбираем модель. Без ключа — заглушка с детерминированным ответом.
     llm = DemoChat(text=demo_answer(query, hits)) if use_demo else _chat_model()
 
-    # Шаг 5: готовая цепочка RetrievalQA собирает промпт, вызывает модель
-    # и возвращает ответ и документы, на которые она опиралась.
-    result = _chain(llm, hits).invoke({"query": query})
+    # Шаг 5: LCEL-цепочка подставляет фрагменты в промпт, вызывает модель
+    # и возвращает только текст ответа.
+    text = _chain(llm, hits).invoke(query)
 
     # Возвращаем вопрос, ответ, найденные чанки и режим генерации.
-    return {
-        "query": query,
-        "answer": result["result"],
-        "hits": _hits_from_documents(result["source_documents"]),
-        "demo": use_demo,
-    }
+    return {"query": query, "answer": text, "hits": hits, "demo": use_demo}
 
 
 def retrieve(query: str, top_k: int = TOP_K) -> list[dict]:
@@ -175,7 +172,7 @@ def retrieve(query: str, top_k: int = TOP_K) -> list[dict]:
 def build_prompt(query: str, hits: list[dict]) -> list[dict]:
     """Показывает, какой промпт получит модель (для отладки и логов).
 
-    Используется тот же PROMPT, что и в RetrievalQA, поэтому результат
+    Используется тот же PROMPT, что и в цепочке, поэтому результат
     побайтово совпадает с тем, что увидит LLM.
     """
     # Подставляем фрагменты и вопрос в общий шаблон.
@@ -239,7 +236,7 @@ _resources_cache: dict = {}
 
 
 class FoundFragmentsRetriever(BaseRetriever):
-    """Ретривер для RetrievalQA, отдающий уже найденные фрагменты.
+    """Ретривер LCEL-цепочки, отдающий уже найденные фрагменты.
 
     Поиск в FAISS выполняется до цепочки: так отказ по порогу срабатывает
     раньше вызова LLM. Цепочка получает готовые документы и занимается
@@ -296,7 +293,7 @@ class OpenAICompatibleChat(BaseChatModel):
 class DemoChat(BaseChatModel):
     """Заглушка LLM для демо-режима: возвращает заранее собранный ответ.
 
-    Она нужна, чтобы цепочка RetrievalQA выполнялась целиком без ключа:
+    Она нужна, чтобы LCEL-цепочка выполнялась целиком без ключа:
     промпт собирается по-настоящему, а генерация подменяется детерминированным
     текстом из найденного фрагмента.
     """
@@ -320,18 +317,25 @@ class DemoChat(BaseChatModel):
         return ChatResult(generations=[ChatGeneration(message=AIMessage(content=self.text))])
 
 
-def _chain(llm: BaseChatModel, hits: list[dict]) -> RetrievalQA:
-    """Собирает готовую цепочку RetrievalQA: prompt + документы + LLM."""
-    # Превращаем найденные чанки в документы с метаданными для цитирования.
+def _chain(llm: BaseChatModel, hits: list[dict]) -> Runnable:
+    """Собирает LCEL-цепочку: контекст + вопрос → промпт → LLM → текст.
+
+    Схема повторяет классическую RetrievalQA, но собрана на Runnable-ах —
+    так устроен современный LangChain 1.x:
+        RunnableParallel(context=retriever | join, question=passthrough)
+        | PROMPT | llm | StrOutputParser()
+    """
+    # Документы с метаданными для цитирования.
     documents = [_document(hit, number) for number, hit in enumerate(hits, start=1)]
-    # chain_type="stuff" — все фрагменты кладутся в один промпт.
-    return RetrievalQA.from_chain_type(
-        llm=llm,
-        chain_type="stuff",
-        retriever=FoundFragmentsRetriever(documents=documents),
-        chain_type_kwargs={"prompt": PROMPT},
-        return_source_documents=True,
+    # Ретривер отдаёт цепочке уже найденные фрагменты.
+    retriever = FoundFragmentsRetriever(documents=documents)
+    # Первый шаг: на вход приходит вопрос, на выходе — контекст и вопрос.
+    prompt_input = RunnableParallel(
+        context=retriever | RunnableLambda(_join_documents),
+        question=RunnablePassthrough(),
     )
+    # Далее: шаблон промпта → модель → текст.
+    return prompt_input | PROMPT | llm | StrOutputParser()
 
 
 def _chat_model() -> OpenAICompatibleChat:
@@ -380,14 +384,15 @@ def _document(hit: dict, number: int) -> Document:
     )
 
 
+def _join_documents(documents: list[Document]) -> str:
+    """Склеивает документы в единый блок контекста через пустую строку."""
+    return "\n\n".join(document.page_content for document in documents)
+
+
 def _context(hits: list[dict]) -> str:
-    """Собирает блок фрагментов так же, как это делает RetrievalQA."""
-    return "\n\n".join(_document(hit, number).page_content for number, hit in enumerate(hits, start=1))
-
-
-def _hits_from_documents(documents: list[Document]) -> list[dict]:
-    """Возвращает найденные чанки в формате hits по документам цепочки."""
-    return [dict(document.metadata) for document in documents]
+    """Собирает блок фрагментов так же, как это делает цепочка."""
+    documents = [_document(hit, number) for number, hit in enumerate(hits, start=1)]
+    return _join_documents(documents)
 
 
 def _openai_message(message: BaseMessage) -> dict:

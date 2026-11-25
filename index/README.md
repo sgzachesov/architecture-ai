@@ -42,11 +42,11 @@
 
 - **`tools/search_index.py`** — поиск по готовому индексу. Кодирует запрос той же моделью, находит `top-k` ближайших чанков в FAISS и печатает их с оценкой близости, `chunk_id`, источником, разделом и позицией в файле — именно эти сведения бот сможет приводить при ответе. Без аргументов прогоняет четыре примера запроса; `--save` кладёт результат в `search_examples.md`, `--json` отдаёт его машиночитаемо, `--top-k` задаёт число чанков.
 
-- **`tools/rag_bot.py`** — ядро RAG-бота (задание 4). Поиск выполняет `retrieve()`, затем готовая цепочка LangChain `RetrievalQA` (`chain_type="stuff"`) собирает промпт с few-shot примерами и Chain-of-Thought и вызывает LLM через OpenAI-совместимый API; `answer()` объединяет всё и отвечает «Я не знаю» при низком скоринге. Без `OPENAI_API_KEY` работает демо-режим: та же цепочка выполняется с заглушкой `DemoChat`, а ответ собирается из найденного фрагмента по шаблону.
+- **`tools/rag_bot.py`** — ядро RAG-бота (задание 4). Поиск выполняет `retrieve()`, затем LCEL-цепочка на Runnable-ах (`RunnableParallel → ChatPromptTemplate → LLM → StrOutputParser`) подставляет few-shot, Chain-of-Thought и найденные фрагменты и вызывает LLM через OpenAI-совместимый API; `answer()` объединяет всё и отвечает «Я не знаю» при низком скоринге. Без `OPENAI_API_KEY` работает демо-режим: та же цепочка выполняется с заглушкой `DemoChat`, а ответ собирается из найденного фрагмента по шаблону.
 
 - **`tools/api.py`** — REST-сервис FastAPI: `POST /chat` (вопрос → ответ с источниками), `GET /health`, `GET /docs`. Запускается через `docker-compose.yml`.
 
-- **`tools/requirements.txt`** — не скрипт, а список зависимостей (`faiss-cpu`, `fastapi`, `langchain-classic`, `langchain-core`, `langchain-text-splitters`, `numpy`, `onnxruntime`, `requests`, `tokenizers`, `uvicorn`), который ставит `Dockerfile`.
+- **`tools/requirements.txt`** — не скрипт, а список зависимостей (`faiss-cpu`, `fastapi`, `langchain-core`, `langchain-text-splitters`, `numpy`, `onnxruntime`, `requests`, `tokenizers`, `uvicorn`), который ставит `Dockerfile`.
 
 Скрипт `tools/build_knowledge_base.py` из этой же папки относится к заданию 2 — он только собирает документы `knowledge_base/` и к индексу не обращается.
 

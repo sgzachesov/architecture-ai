@@ -52,8 +52,8 @@ DESCRIPTION = """
 RAG-бот по базе знаний вымышленной вселенной QuantumForge Software.
 
 **Цепочка:** вопрос → эмбеддинг bge-m3 → поиск `top-k` чанков в FAISS →
-готовая цепочка LangChain `RetrievalQA` (промпт с few-shot и Chain-of-Thought)
-→ ответ LLM → источники.
+LCEL-цепочка (`RunnableParallel → ChatPromptTemplate → LLM → StrOutputParser`)
+с few-shot и Chain-of-Thought → ответ LLM → источники.
 
 | Режим | Когда включается | Что делает |
 |---|---|---|
@@ -235,7 +235,7 @@ def root() -> ServiceInfo:
     summary="Задать вопрос базе знаний",
     description=(
         "Прогоняет полную цепочку RAG: эмбеддинг вопроса → поиск в FAISS → "
-        "готовая цепочка RetrievalQA (промпт с few-shot и Chain-of-Thought) → "
+        "LCEL-цепочка (промпт с few-shot и Chain-of-Thought) → "
         "ответ LLM (или демо-ответ).\n\n"
         "Если лучший чанк ниже порога `threshold`, бот отвечает «Я не знаю» "
         "без вызова LLM."
