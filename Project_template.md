@@ -162,13 +162,15 @@ Query: How does a fluxblade work and what crystal does it use?
 | 1 | Текстовый запрос пользователя | `POST /chat` |
 | 2 | Эмбеддинг тем же энкодером, что строил индекс | `tools/embedding.py` (`BgeM3`) |
 | 3 | Поиск `top-k` ближайших чанков в FAISS | `tools/search_index.py` |
-| 4 | Промпт: system (CoT) + few-shot + найденные фрагменты + вопрос | `tools/rag_bot.py` |
-| 5 | Генерация ответа LLM через OpenAI-совместимый API | `tools/rag_bot.py` (`generate`) |
+| 4 | Готовая цепочка LangChain `RetrievalQA` (`chain_type="stuff"`): промпт из system (CoT), few-shot и найденных фрагментов | `tools/rag_bot.py` (`PROMPT`, `_chain`) |
+| 5 | Вызов LLM через OpenAI-совместимый API; без ключа — заглушка `DemoChat` | `tools/rag_bot.py` (`OpenAICompatibleChat`) |
 | 6 | Ответ + источники для цитирования | `POST /chat` |
 
-- `tools/rag_bot.py` — ядро: `answer()`, `retrieve()`, `build_prompt()`, `generate()`, `demo_answer()`.
+- `tools/rag_bot.py` — ядро: `answer()`, `retrieve()`, `build_prompt()`, `demo_answer()` и сборка `RetrievalQA` в `_chain()`.
 - `tools/api.py` — REST-сервис FastAPI.
 - `docker-compose.yml` — запуск сервиса в контейнере.
+
+Цепочка не написана вручную: используется готовая `RetrievalQA` из `langchain-classic`. Поиск в FAISS выполняется до неё, чтобы отказ по порогу срабатывал раньше вызова LLM; цепочке передаются уже найденные документы через собственный `BaseRetriever`, а она собирает промпт и вызывает модель.
 
 ## 2. Техники промптинга
 
