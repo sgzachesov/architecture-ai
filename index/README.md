@@ -30,6 +30,7 @@
 - `faiss.index` — индекс FAISS (`IndexIDMap2` + `IndexFlatIP`, косинусная близость на нормализованных векторах).
 - `chunks.json` — метаданные чанков и текст, по индексу совпадает с id в FAISS.
 - `search_examples.md` — примеры запросов и найденные чанки.
+- `rag_examples.md` — примеры диалогов RAG-бота (задание 4): 5 успешных и 2 случая «Я не знаю».
 
 ## Скрипты (tools/)
 
@@ -41,7 +42,11 @@
 
 - **`tools/search_index.py`** — поиск по готовому индексу. Кодирует запрос той же моделью, находит `top-k` ближайших чанков в FAISS и печатает их с оценкой близости, `chunk_id`, источником, разделом и позицией в файле — именно эти сведения бот сможет приводить при ответе. Без аргументов прогоняет четыре примера запроса; `--save` кладёт результат в `search_examples.md`, `--json` отдаёт его машиночитаемо, `--top-k` задаёт число чанков.
 
-- **`tools/requirements.txt`** — не скрипт, а список зависимостей (`faiss-cpu`, `numpy`, `onnxruntime`, `tokenizers`, `langchain-text-splitters`), который ставит `Dockerfile`.
+- **`tools/rag_bot.py`** — ядро RAG-бота (задание 4). Цепочка: `retrieve()` ищет чанки, `build_prompt()` собирает промпт с few-shot примерами и Chain-of-Thought, `generate()` вызывает LLM через OpenAI-совместимый API, `answer()` объединяет всё и отвечает «Я не знаю» при низком скоринге. Без `OPENAI_API_KEY` работает демо-режим: ответ собирается из найденного фрагмента по шаблону.
+
+- **`tools/api.py`** — REST-сервис FastAPI: `POST /chat` (вопрос → ответ с источниками), `GET /health`, `GET /docs`. Запускается через `docker-compose.yml`.
+
+- **`tools/requirements.txt`** — не скрипт, а список зависимостей (`faiss-cpu`, `fastapi`, `langchain-text-splitters`, `numpy`, `onnxruntime`, `requests`, `tokenizers`, `uvicorn`), который ставит `Dockerfile`.
 
 Скрипт `tools/build_knowledge_base.py` из этой же папки относится к заданию 2 — он только собирает документы `knowledge_base/` и к индексу не обращается.
 
@@ -99,6 +104,37 @@ python -m pip install -r tools/requirements.txt
 python tools/build_index.py
 python tools/search_index.py
 ```
+
+## REST-сервис RAG-бота (задание 4)
+
+`tools/api.py` оборачивает ядро `tools/rag_bot.py` в HTTP-API. Удобнее всего
+запускать через `docker-compose.yml` из корня проекта:
+
+```powershell
+docker compose up --build
+```
+
+Сервис поднимается на `http://localhost:8000`:
+
+```powershell
+# проверка живости
+curl.exe http://localhost:8000/health
+
+# вопрос к боту
+curl.exe -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d '{\"query\": \"Кто такой Арэн Велмор?\"}'
+```
+
+Swagger-документация — `http://localhost:8000/docs`.
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| `POST` | `/chat` | Вопрос → ответ с источниками |
+| `GET` | `/health` | Живость и режим (LLM/демо) |
+| `GET` | `/docs` | Интерактивная документация |
+
+Переменные окружения: `OPENAI_API_KEY` (без него — демо-режим), `OPENAI_BASE_URL`,
+`LLM_MODEL`, `TOP_K`, `SCORE_THRESHOLD`. Ключ передаётся с хоста через compose и в
+код не попадает. Примеры диалогов — в `rag_examples.md`.
 
 ## Пример запроса
 
