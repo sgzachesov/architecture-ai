@@ -124,13 +124,35 @@ curl.exe http://localhost:8000/health
 curl.exe -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d '{\"query\": \"Кто такой Арэн Велмор?\"}'
 ```
 
-Swagger-документация — `http://localhost:8000/docs`.
+### Swagger UI
+
+![Swagger UI](swagger.jpeg)
+
+Интерактивная документация — `http://localhost:8000/docs` (Swagger UI),
+альтернативная — `http://localhost:8000/redoc`, схема OpenAPI 3.1 —
+`http://localhost:8000/openapi.json`.
+
+Как проверить запрос из браузера:
+
+1. Раскройте `POST /chat` → **Try it out**.
+2. Выберите готовый пример из выпадающего списка (релевантный вопрос или
+   «Как приготовить борщ?») либо введите свой.
+3. **Execute** — ниже появятся код ответа, тело и заголовки.
+
+Что размечено в схеме:
+
+- теги `bot` и `service` с описаниями разделов;
+- описания всех полей (`query`, `top_k`, `threshold`) и примеры значений;
+- три примера запроса и полный пример ответа с источниками;
+- коды `200`, `422` (некорректный запрос) и `502` (ошибка LLM).
 
 | Метод | Путь | Назначение |
 |---|---|---|
 | `POST` | `/chat` | Вопрос → ответ с источниками |
 | `GET` | `/health` | Живость и режим (LLM/демо) |
-| `GET` | `/docs` | Интерактивная документация |
+| `GET` | `/docs` | Swagger UI |
+| `GET` | `/redoc` | ReDoc |
+| `GET` | `/openapi.json` | Схема OpenAPI 3.1 |
 
 Переменные окружения: `OPENAI_API_KEY` (без него — демо-режим), `OPENAI_BASE_URL`,
 `LLM_MODEL`, `TOP_K`, `SCORE_THRESHOLD`. Ключ передаётся с хоста через compose и в

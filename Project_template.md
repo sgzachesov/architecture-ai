@@ -193,13 +193,17 @@ docker compose up --build
 |---|---|---|
 | `POST` | `/chat` | Вопрос → ответ с источниками |
 | `GET` | `/health` | Живость и текущий режим (LLM/демо) |
-| `GET` | `/docs` | Swagger-документация |
+| `GET` | `/docs` | Swagger UI |
+| `GET` | `/redoc` | ReDoc |
+| `GET` | `/openapi.json` | Схема OpenAPI 3.1 |
 
 ```bash
 curl -X POST http://localhost:8000/chat \
   -H "Content-Type: application/json" \
   -d '{"query": "Кто такой Арэн Велмор?"}'
 ```
+
+Swagger UI (`http://localhost:8000/docs`) даёт готовые примеры запроса и ответа, описания всех полей и коды ошибок. Проверка без curl: `POST /chat` → **Try it out** → выбрать пример или ввести вопрос → **Execute**.
 
 Переменные окружения: `OPENAI_API_KEY` (без него — демо-режим), `OPENAI_BASE_URL`, `LLM_MODEL`, `TOP_K`, `SCORE_THRESHOLD`. Ключ в код не попадает — передаётся через окружение.
 
