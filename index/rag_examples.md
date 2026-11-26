@@ -122,13 +122,13 @@ OPENAI_API_KEY=... OPENAI_BASE_URL=https://... LLM_MODEL=... docker compose up -
 **Ответ бота:**
 
 > Размышление:
-> 1. На вопрос отвечает фрагмент «the-synth-flux-001» (оценка близости 0.531, раздел «The Synth Flux»).
+> 1. На вопрос отвечает фрагмент «the-synth-flux-001» (оценка близости 0.543, раздел «The Synth Flux»).
 > 2. Ключевой факт из фрагмента: The Synth Flux was an energy field created by all life that bound everything in the universe together.
 >
 > Ответ на основе базы знаний: The Synth Flux was an energy field created by all life that bound everything in the universe together.
 > (демо-режим: ответ собран из фрагмента, LLM не вызывалась)
 
-**Источники:** `the-synth-flux-001` (0.531, `knowledge_base/the-synth-flux.md`, chars 18–1701), `the-synth-flux-006` (0.501), `fluxadept-001` (0.500).
+**Источники:** `the-synth-flux-001` (0.543, `knowledge_base/the-synth-flux.md`, chars 18–1701), `the-synth-flux-006` (0.512), `the-synth-flux-003` (0.500).
 
 ### 3. Как работает флюксблейд и какой в нём кристалл?
 
@@ -145,20 +145,20 @@ OPENAI_API_KEY=... OPENAI_BASE_URL=https://... LLM_MODEL=... docker compose up -
 
 **Источники:** `fluxblade-001` (0.557, `knowledge_base/fluxblade.md`, chars 13–1077), `fluxblade-002` (0.555), `fluxadept-005` (0.528).
 
-### 4. Что случилось с Сорхой во время Войн Ват?
+### 4. Что случилось на Сорхе после смерти Оллаги?
 
-**Запрос:** `Что случилось с Сорхой во время Войн Ват?`
+**Запрос:** `Что случилось на Сорхе после смерти Оллаги?`
 
 **Ответ бота:**
 
 > Размышление:
-> 1. На вопрос отвечает фрагмент «sorrhas-002» (оценка близости 0.496, раздел «Sorrhas»).
+> 1. На вопрос отвечает фрагмент «sorrhas-002» (оценка близости 0.485, раздел «Sorrhas»).
 > 2. Ключевой факт из фрагмента: Following the death of Ollag and the withdrawal of Dominion forces after the Battle of Sylvaneth, an enormous power vacuum occurred on the world, with numerous crime syndicates like the Red Key Raiders attempting to build legitimacy as mining companies.
 >
 > Ответ на основе базы знаний: Following the death of Ollag and the withdrawal of Dominion forces after the Battle of Sylvaneth, an enormous power vacuum occurred on the world, with numerous crime syndicates like the Red Key Raiders attempting to build legitimacy as mining companies.
 > (демо-режим: ответ собран из фрагмента, LLM не вызывалась)
 
-**Источники:** `sorrhas-002` (0.496, `knowledge_base/sorrhas.md`, chars 1662–3028), `sorrhas-006` (0.491), `sorel-vand-002` (0.475).
+**Источники:** `sorrhas-002` (0.485, `knowledge_base/sorrhas.md`, chars 1662–3028), `sorrhas-001` (0.472), `sorrhas-004` (0.438).
 
 ### 5. Кто такая Кейлит Рау?
 
@@ -167,13 +167,13 @@ OPENAI_API_KEY=... OPENAI_BASE_URL=https://... LLM_MODEL=... docker compose up -
 **Ответ бота:**
 
 > Размышление:
-> 1. На вопрос отвечает фрагмент «kaelith-005» (оценка близости 0.465, раздел «Early life and apprenticeship»).
+> 1. На вопрос отвечает фрагмент «kaelith-005» (оценка близости 0.475, раздел «Early life and apprenticeship»).
 > 2. Ключевой факт из фрагмента: The origins of Kaelith Rau were closely guarded secrets that he took to his grave more than once.
 >
 > Ответ на основе базы знаний: The origins of Kaelith Rau were closely guarded secrets that he took to his grave more than once.
 > (демо-режим: ответ собран из фрагмента, LLM не вызывалась)
 
-**Источники:** `kaelith-005` (0.465, `knowledge_base/kaelith.md`, chars 3968–5414), `kaelith-002` (0.458), `kaelith-001` (0.444).
+**Источники:** `kaelith-005` (0.475, `knowledge_base/kaelith.md`, chars 3968–5414), `kaelith-002` (0.461), `kaelith-001` (0.449).
 
 ---
 
@@ -189,15 +189,15 @@ OPENAI_API_KEY=... OPENAI_BASE_URL=https://... LLM_MODEL=... docker compose up -
 
 **Почему:** лучший чанк (`meridian-prime-006`) дал 0.432 — ниже порога 0.45. Отказ сработал до вызова LLM.
 
-### 7. Вопрос вне базы знаний: кулинария
+### 7. Вопрос вне базы знаний: литература
 
-**Запрос:** `Как приготовить борщ?`
+**Запрос:** `Кто написал «Войну и мир»?`
 
 **Ответ бота:**
 
 > Я не знаю: в базе знаний не нашлось достаточно близкого материала по этому вопросу.
 
-**Почему:** лучший чанк (`gorran-002`) дал 0.354 — ниже порога 0.45.
+**Почему:** лучший чанк (`voidsworn-004`) дал 0.375 — ниже порога 0.45.
 
 ---
 

@@ -1,6 +1,6 @@
 # Векторный индекс
 
-Индекс собран по базе знаний из `knowledge_base/` — 38 документов о вымышленной вселенной Aetherium Concord.
+Индекс собран по базе знаний из `knowledge_base/` — 39 документов о вымышленной вселенной Aetherium Concord (38 материалов + демонстрационный `injection-demo.md` для задания 5).
 
 ## Модель эмбеддингов
 
@@ -19,8 +19,8 @@
 
 | | |
 |---|---|
-| Чанков в индексе | 229 |
-| Слов в чанке | 36–300, медиана 226 |
+| Чанков в индексе | 230 |
+| Слов в чанке | 7–300, медиана 226 |
 | Время генерации эмбеддингов | ~2 мин на CPU |
 
 Каждый чанк хранит метаданные для цитирования: `chunk_id`, `source` (путь к файлу), `title`, `heading` (раздел), `start_char` / `end_char` (позиция в исходном файле), `words`.
@@ -31,6 +31,7 @@
 - `chunks.json` — метаданные чанков и текст, по индексу совпадает с id в FAISS.
 - `search_examples.md` — примеры запросов и найденные чанки.
 - `rag_examples.md` — примеры диалогов RAG-бота (задание 4): 5 успешных и 2 случая «Я не знаю».
+- `security_report.md` — лог защиты от промпт-инъекций (задание 5): 10 запросов, сравнение уровней `none`/`preprompt`/`full`, выводы. Генерируется `tools/security_test.py`.
 
 ## Скрипты (tools/)
 
@@ -45,6 +46,8 @@
 - **`tools/rag_bot.py`** — ядро RAG-бота (задание 4). Поиск выполняет `retrieve()`, затем LCEL-цепочка на Runnable-ах (`RunnableParallel → ChatPromptTemplate → LLM → StrOutputParser`) подставляет few-shot, Chain-of-Thought и найденные фрагменты и вызывает LLM через OpenAI-совместимый API; `answer()` объединяет всё и отвечает «Я не знаю» при низком скоринге. Без `OPENAI_API_KEY` работает демо-режим: та же цепочка выполняется с заглушкой `DemoChat`, а ответ собирается из найденного фрагмента по шаблону.
 
 - **`tools/api.py`** — REST-сервис FastAPI: `POST /chat` (вопрос → ответ с источниками), `GET /health`, `GET /docs`. Запускается через `docker-compose.yml`.
+
+- **`tools/security_test.py`** — тесты защиты от промпт-инъекций (задание 5). Прогоняет 10 запросов (5 полезных, 3 провокационных, 2 вне базы) на уровне `full`, сравнивает уровни `none` / `preprompt` / `full` на атакующих запросах, проверяет, попадает ли секрет в сам промпт, и пишет отчёт `index/security_report.md`. С `--base-url http://localhost:8000` дополнительно отправляет те же запросы в запущенный REST-сервис.
 
 - **`tools/requirements.txt`** — не скрипт, а список зависимостей (`faiss-cpu`, `fastapi`, `langchain-core`, `langchain-text-splitters`, `numpy`, `onnxruntime`, `requests`, `tokenizers`, `uvicorn`), который ставит `Dockerfile`.
 
@@ -155,8 +158,10 @@ curl.exe -X POST http://localhost:8000/chat -H "Content-Type: application/json" 
 | `GET` | `/openapi.json` | Схема OpenAPI 3.1 |
 
 Переменные окружения: `OPENAI_API_KEY` (без него — демо-режим), `OPENAI_BASE_URL`,
-`LLM_MODEL`, `TOP_K`, `SCORE_THRESHOLD`. Ключ передаётся с хоста через compose и в
-код не попадает. Примеры диалогов — в `rag_examples.md`.
+`LLM_MODEL`, `TOP_K`, `SCORE_THRESHOLD`, `RAG_PROTECTION` (уровень защиты от
+промпт-инъекций: `none` / `preprompt` / `full`, по умолчанию `full` — задание 5).
+Ключ передаётся с хоста через compose и в
+код не попадает. Примеры диалогов — в `rag_examples.md`, отчёт о защите — в `security_report.md`.
 
 ## Пример запроса
 

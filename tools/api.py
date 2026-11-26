@@ -60,6 +60,11 @@ LCEL-цепочка (`RunnableParallel → ChatPromptTemplate → LLM → StrOut
 | LLM | задан `OPENAI_API_KEY` | промпт уходит в OpenAI-совместимый `/chat/completions` |
 | Демо | ключа нет | ответ детерминированно собирается из найденного чанка |
 
+**Защита от промпт-инъекций:** по умолчанию уровень `full` — guard-инструкция в
+system-промпте, post-фильтр подозрительных чанков и удаление системных
+конструкций. Уровень задаётся переменной `RAG_PROTECTION`
+(`none` / `preprompt` / `full`).
+
 **Как проверить:** откройте `POST /chat` → «Try it out» → введите вопрос →
 «Execute». Готовые примеры есть в поле `query` схемы запроса.
 """
@@ -185,6 +190,11 @@ class HealthResponse(BaseModel):
     status: str = Field(..., description="Всегда ok, если сервис отвечает", examples=["ok"])
     demo: bool = Field(..., description="True, если OPENAI_API_KEY не задан")
     model: str = Field(..., description="Имя модели генератора", examples=["gpt-4o-mini"])
+    protection: str = Field(
+        ...,
+        description="Уровень защиты от промпт-инъекций: none / preprompt / full",
+        examples=["full"],
+    )
 
 
 class ServiceInfo(BaseModel):
@@ -209,6 +219,7 @@ def health() -> HealthResponse:
         status="ok",
         demo=not bool(rag_bot.OPENAI_API_KEY),
         model=rag_bot.LLM_MODEL,
+        protection=rag_bot.PROTECTION,
     )
 
 
@@ -238,7 +249,9 @@ def root() -> ServiceInfo:
         "LCEL-цепочка (промпт с few-shot и Chain-of-Thought) → "
         "ответ LLM (или демо-ответ).\n\n"
         "Если лучший чанк ниже порога `threshold`, бот отвечает «Я не знаю» "
-        "без вызова LLM."
+        "без вызова LLM.\n\n"
+        "Защита от промпт-инъекций: guard в system-промпте, post-фильтр чанков "
+        "и удаление системных конструкций (уровень `RAG_PROTECTION`, по умолчанию `full`)."
     ),
     response_model=ChatResponse,
     response_description="Ответ бота и источники",
