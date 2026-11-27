@@ -1,0 +1,28 @@
+services:
+  rag-api:
+    build: .
+    image: quantumforge-rag
+    container_name: quantumforge-rag-api
+    ports:
+      - "8000:8000"
+    volumes:
+      # Монтируем проект, чтобы контейнер видел index/, knowledge_base/ и models/.
+      - .:/app
+    environment:
+      # Ключ LLM передаётся с хоста; если не задан — работает демо-режим.
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      - LLM_MODEL=${LLM_MODEL:-gpt-4o-mini}
+      - TOP_K=${TOP_K:-3}
+      - SCORE_THRESHOLD=${SCORE_THRESHOLD:-0.45}
+      # Уровень защиты от промпт-инъекций: none / preprompt / full.
+      - RAG_PROTECTION=${RAG_PROTECTION:-full}
+    # ENTRYPOINT образа — python, поэтому здесь только аргументы uvicorn.
+    command: ["-m", "uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000", "--app-dir", "/app/tools"]
+    healthcheck:
+      # Проверяем живость через /health.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
